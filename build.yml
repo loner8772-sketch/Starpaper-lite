@@ -1,0 +1,357 @@
+name: Build StarPaper Lite APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Generate project
+        run: |
+          set -e
+          mkdir -p _proj && cd _proj
+          cat > settings.gradle <<'STARPAPER_EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "StarPaperLite"
+          include ':app'
+          STARPAPER_EOF
+          cat > build.gradle <<'STARPAPER_EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          STARPAPER_EOF
+          cat > gradle.properties <<'STARPAPER_EOF'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          STARPAPER_EOF
+          mkdir -p app
+          cat > app/build.gradle <<'STARPAPER_EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.starpaper.lite'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId "com.starpaper.lite"
+                  minSdk 21
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
+          }
+          STARPAPER_EOF
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'STARPAPER_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-feature
+                  android:name="android.software.live_wallpaper"
+                  android:required="true" />
+
+              <application
+                  android:label="@string/app_name"
+                  android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar"
+                  android:allowBackup="false">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".VideoWallpaperService"
+                      android:exported="true"
+                      android:label="@string/app_name"
+                      android:permission="android.permission.BIND_WALLPAPER">
+                      <intent-filter>
+                          <action android:name="android.service.wallpaper.WallpaperService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.service.wallpaper"
+                          android:resource="@xml/wallpaper" />
+                  </service>
+              </application>
+          </manifest>
+          STARPAPER_EOF
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/wallpaper.xml <<'STARPAPER_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+              android:description="@string/app_name" />
+          STARPAPER_EOF
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/strings.xml <<'STARPAPER_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">StarPaper Lite</string>
+          </resources>
+          STARPAPER_EOF
+          mkdir -p app/src/main/java/com/starpaper/lite
+          cat > app/src/main/java/com/starpaper/lite/MainActivity.java <<'STARPAPER_EOF'
+          package com.starpaper.lite;
+
+          import android.app.Activity;
+          import android.app.WallpaperManager;
+          import android.content.ComponentName;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
+          public class MainActivity extends Activity {
+              static final String PREFS = "starpaper";
+              static final String KEY_URI = "video_uri";
+              private static final int PICK_VIDEO = 1;
+
+              private TextView status;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  int pad = (int) (24 * getResources().getDisplayMetrics().density);
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setGravity(Gravity.CENTER);
+                  root.setPadding(pad, pad, pad, pad);
+
+                  TextView title = new TextView(this);
+                  title.setText("StarPaper Lite");
+                  title.setTextSize(26);
+                  title.setGravity(Gravity.CENTER);
+                  root.addView(title);
+
+                  status = new TextView(this);
+                  status.setGravity(Gravity.CENTER);
+                  status.setPadding(0, pad, 0, pad);
+                  root.addView(status);
+
+                  Button pick = new Button(this);
+                  pick.setText("1. Choose video");
+                  pick.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                          i.addCategory(Intent.CATEGORY_OPENABLE);
+                          i.setType("video/*");
+                          i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                  | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                          startActivityForResult(i, PICK_VIDEO);
+                      }
+                  });
+                  root.addView(pick);
+
+                  Button set = new Button(this);
+                  set.setText("2. Set as wallpaper");
+                  set.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          Intent i = new Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER);
+                          i.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
+                                  new ComponentName(MainActivity.this, VideoWallpaperService.class));
+                          try {
+                              startActivity(i);
+                          } catch (Exception e) {
+                              startActivity(new Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER));
+                          }
+                      }
+                  });
+                  root.addView(set);
+
+                  setContentView(root);
+                  refreshStatus();
+              }
+
+              @Override
+              protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+                  super.onActivityResult(requestCode, resultCode, data);
+                  if (requestCode == PICK_VIDEO && resultCode == RESULT_OK && data != null
+                          && data.getData() != null) {
+                      Uri uri = data.getData();
+                      try {
+                          getContentResolver().takePersistableUriPermission(
+                                  uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                      } catch (Exception ignored) {
+                      }
+                      SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+                      sp.edit().putString(KEY_URI, uri.toString()).apply();
+                      refreshStatus();
+                  }
+              }
+
+              private void refreshStatus() {
+                  String s = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_URI, null);
+                  status.setText(s == null ? "No video chosen yet" : "Video ready");
+              }
+          }
+          STARPAPER_EOF
+          mkdir -p app/src/main/java/com/starpaper/lite
+          cat > app/src/main/java/com/starpaper/lite/VideoWallpaperService.java <<'STARPAPER_EOF'
+          package com.starpaper.lite;
+
+          import android.content.Context;
+          import android.media.MediaPlayer;
+          import android.net.Uri;
+          import android.service.wallpaper.WallpaperService;
+          import android.view.Surface;
+          import android.view.SurfaceHolder;
+
+          public class VideoWallpaperService extends WallpaperService {
+
+              @Override
+              public Engine onCreateEngine() {
+                  return new VideoEngine();
+              }
+
+              private class VideoEngine extends Engine {
+                  private MediaPlayer player;
+                  private SurfaceHolder holder;
+                  private boolean visible;
+
+                  @Override
+                  public void onCreate(SurfaceHolder surfaceHolder) {
+                      super.onCreate(surfaceHolder);
+                      holder = surfaceHolder;
+                  }
+
+                  @Override
+                  public void onSurfaceCreated(SurfaceHolder surfaceHolder) {
+                      super.onSurfaceCreated(surfaceHolder);
+                      holder = surfaceHolder;
+                      if (visible) startPlayer();
+                  }
+
+                  @Override
+                  public void onSurfaceDestroyed(SurfaceHolder surfaceHolder) {
+                      stopPlayer();
+                      super.onSurfaceDestroyed(surfaceHolder);
+                  }
+
+                  @Override
+                  public void onVisibilityChanged(boolean isVisible) {
+                      visible = isVisible;
+                      if (isVisible) startPlayer();
+                      else stopPlayer();
+                  }
+
+                  @Override
+                  public void onDestroy() {
+                      stopPlayer();
+                      super.onDestroy();
+                  }
+
+                  // Plays only while the wallpaper is visible, and frees the decoder
+                  // otherwise, so RAM and battery stay low on small phones.
+                  private void startPlayer() {
+                      if (player != null || holder == null) return;
+                      Surface surface = holder.getSurface();
+                      if (surface == null || !surface.isValid()) return;
+
+                      Context ctx = getApplicationContext();
+                      String uriStr = ctx.getSharedPreferences(MainActivity.PREFS, MODE_PRIVATE)
+                              .getString(MainActivity.KEY_URI, null);
+                      if (uriStr == null) return;
+
+                      try {
+                          MediaPlayer mp = new MediaPlayer();
+                          player = mp;
+                          mp.setSurface(surface);
+                          mp.setDataSource(ctx, Uri.parse(uriStr));
+                          mp.setLooping(true);
+                          mp.setVolume(0f, 0f);
+                          mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
+                          mp.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+                              @Override
+                              public void onPrepared(MediaPlayer p) {
+                                  if (visible && p == player) p.start();
+                              }
+                          });
+                          mp.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                              @Override
+                              public boolean onError(MediaPlayer p, int what, int extra) {
+                                  stopPlayer();
+                                  return true;
+                              }
+                          });
+                          mp.prepareAsync();
+                      } catch (Exception e) {
+                          stopPlayer();
+                      }
+                  }
+
+                  private void stopPlayer() {
+                      MediaPlayer mp = player;
+                      player = null;
+                      if (mp != null) {
+                          try {
+                              mp.reset();
+                              mp.release();
+                          } catch (Exception ignored) {
+                          }
+                      }
+                  }
+              }
+          }
+          STARPAPER_EOF
+
+      - name: Build APK
+        working-directory: _proj
+        run: gradle assembleDebug --no-daemon
+
+      - name: Publish APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: StarPaper Lite v${{ github.run_number }}
+          files: _proj/app/build/outputs/apk/debug/app-debug.apk
